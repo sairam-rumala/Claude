@@ -1,43 +1,56 @@
-# Status line with token count (simple version)
-$input_json = [Console]::In.ReadToEnd()
-if (-not $input_json) { exit }
+$inputJson = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($inputJson)) { exit 0 }
 
 try {
-    $data = $input_json | ConvertFrom-Json
-    
-    # Get current directory
-    $cwd = $data.workspace.current_dir
-    if (-not $cwd) { $cwd = (Get-Location).Path }
-    
-    # Shorten path to home
-    $home_path = $env:USERPROFILE
-    if ($cwd.StartsWith($home_path)) {
-        $cwd = "~" + $cwd.Substring($home_path.Length)
+    $data = $inputJson | ConvertFrom-Json
+
+    $cwd = $null
+    if ($data.workspace -and $data.workspace.current_dir) {
+        $cwd = $data.workspace.current_dir
     }
-    
-    # Get model
-    $model = $data.model.id
-    
-    # Get token counts
-    $total_input = $data.context_window.total_input_tokens
-    $total_output = $data.context_window.total_output_tokens
-    $ctx_size = $data.context_window.context_window_size
-    
-    # Calculate total tokens used
-    $total_tokens = $total_input + $total_output
-    
-    # Format large numbers with K (e.g., 38.5k)
-    if ($total_tokens -ge 1000) {
-        $formatted = "{0:N1}k" -f ($total_tokens / 1000)
-    } else {
-        $formatted = $total_tokens
+    elseif ($data.cwd) {
+        $cwd = $data.cwd
     }
-    
-    $ctx_size_k = $ctx_size / 1000
-    
-    # Simple output without color codes
-    Write-Host "$cwd | $model | ContextWindow: $formatted"
+    if (-not $cwd) {
+        $cwd = (Get-Location).Path
+    }
+
+    $homePath = $env:USERPROFILE
+    if ($cwd -and $homePath -and $cwd.StartsWith($homePath)) {
+        $cwd = "~" + $cwd.Substring($homePath.Length)
+    }
+
+    $model = "unknown"
+    if ($data.model) {
+        if ($data.model.display_name) { $model = $data.model.display_name }
+        elseif ($data.model.id) { $model = $data.model.id }
+    }
+
+    $pct = 0
+    if ($data.context_window -and $data.context_window.used_percentage -ne $null) {
+        $pct = [int]$data.context_window.used_percentage
+    }
+
+    $barWidth = 20
+    $filled = [Math]::Floor(($pct / 100) * $barWidth)
+    if ($filled -lt 0) { $filled = 0 }
+    if ($filled -gt $barWidth) { $filled = $barWidth }
+
+    $bar = ""
+    for ($i = 0; $i -lt $barWidth; $i++) {
+        if ($i -lt $filled) { $bar += "#" } else { $bar += "-" }
+    }
+
+    $label = "OK"
+    if ($pct -ge 90) { $label = "CRIT" }
+    elseif ($pct -ge 75) { $label = "HIGH" }
+    elseif ($pct -ge 50) { $label = "WARN" }
+
+    Write-Host "DIR $cwd | MODEL $model"
+    Write-Host "$label [$bar] $pct"
+    exit 0
 }
 catch {
-    Write-Host "error"
+    Write-Host "ERROR $($_.Exception.Message)"
+    exit 1
 }
